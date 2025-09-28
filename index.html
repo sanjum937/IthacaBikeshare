@@ -1,0 +1,390 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Ithaca BikeShare Dashboard</title>
+  <script src="https://d3js.org/d3.v6.min.js"></script>
+  <style>
+    body {
+      font-family: Arial, sans-serif;
+      text-align: center;
+    }
+
+    .chart-container {
+      display: flex;
+      justify-content: center;
+      margin-top: 20px;
+      flex-direction: column;
+      align-items: center;
+    }
+
+    #tooltip {
+      position: absolute;
+      background: #fff;
+      padding: 8px;
+      border: 1px solid #ccc;
+      border-radius: 4px;
+      pointer-events: none;
+      opacity: 0;
+      transition: opacity 0.3s;
+      font-size: 14px;
+    }
+
+    .chart-section {
+      display: none;
+    }
+  </style>
+</head>
+
+<body>
+  <h1>Ithaca BikeShare Dashboard</h1>
+
+  <!-- Dropdown Selector -->
+  <label for="chart-select"><strong>Select a chart to view:</strong></label>
+  <select id="chart-select">
+    <option value="chart1">Trips by Hour</option>
+    <option value="chart2">Trip Duration Histogram</option>
+    <option value="chart3">Trip Start and End Distribution</option>
+    <option value="chart4">Cornell Users: Trips by Hour</option>
+    <option value="chart5">Cornell Affiliated Riders (by email)</option>
+  </select>
+
+  <!-- Chart Containers -->
+  <div id="chart1" class="chart-container chart-section"></div>
+  <div id="chart2" class="chart-container chart-section"></div>
+  <div id="chart3" class="chart-container chart-section"></div>
+  <div id="chart4" class="chart-container chart-section"></div>
+  <div id="chart5" class="chart-container chart-section"></div>
+
+  <div id="tooltip"></div>
+
+  <script>
+    // Dropdown logic to show only one chart at a time
+    const chartSelect = document.getElementById("chart-select");
+    const chartSections = document.querySelectorAll(".chart-section");
+
+    function showSelectedChart() {
+      const selected = chartSelect.value;
+      chartSections.forEach(div => {
+        div.style.display = div.id === selected ? "block" : "none";
+      });
+    }
+
+    chartSelect.addEventListener("change", showSelectedChart);
+    showSelectedChart(); // show initial chart
+
+    const tooltip = d3.select("#tooltip");
+
+    function showTooltip(event, htmlContent) {
+      tooltip
+        .style("opacity", 1)
+        .html(htmlContent)
+        .style("left", (event.pageX + 10) + "px")
+        .style("top", (event.pageY - 28) + "px");
+    }
+
+    function hideTooltip() {
+      tooltip.style("opacity", 0);
+    }
+
+    // D3 code
+    d3.csv("edu-trips-ithaca-nov-12-24 - edu-trips-ithaca-nov-12-24.csv").then(data => {
+      if (!data || data.length === 0) {
+        console.error("CSV data is empty or not loaded correctly.");
+        return;
+      }
+
+      data.forEach(d => {
+        d.duration = +d.duration;
+        d.trip_start_time = new Date(d.trip_start_time);
+      });
+
+      // Chart 1: Trips by Hour
+      const tripsByHour = d3.rollup(data, v => v.length, d => d.trip_start_time.getHours());
+      const tripArray = Array.from(tripsByHour, ([hour, count]) => ({ hour, count })).sort((a, b) => a.hour - b.hour);
+
+      const width = 600, height = 400, margin = { top: 40, right: 20, bottom: 40, left: 50 };
+
+      const x = d3.scaleBand().domain(tripArray.map(d => d.hour)).range([margin.left, width - margin.right]).padding(0.1);
+      const y = d3.scaleLinear().domain([0, d3.max(tripArray, d => d.count)]).nice().range([height - margin.bottom, margin.top]);
+
+      const svgChart1 = d3.select("#chart1").append("svg").attr("width", width).attr("height", height);
+      svgChart1.append("g")
+        .selectAll("rect")
+        .data(tripArray)
+        .enter().append("rect")
+        .attr("x", d => x(d.hour))
+        .attr("y", d => y(d.count))
+        .attr("height", d => y(0) - y(d.count))
+        .attr("width", x.bandwidth())
+        .attr("fill", "steelblue")
+        .on("mouseover", (event, d) => {
+          showTooltip(event, `Hour: ${d.hour}:00<br>Trips: ${d.count}`);
+        })
+        .on("mouseout", hideTooltip);
+      svgChart1.append("g").attr("transform", `translate(0,${height - margin.bottom})`).call(d3.axisBottom(x).tickFormat(d => d + ":00"));
+      svgChart1.append("g").attr("transform", `translate(${margin.left},0)`).call(d3.axisLeft(y));
+
+      // Chart 2: Trip Duration Histogram
+      const xHist = d3.scaleLinear().domain([0, 40]).range([0, width]);
+      const thresholds = d3.range(0, 42, 2);
+      const histogram = d3.histogram().value(d => d.duration).domain(xHist.domain()).thresholds(thresholds);
+      const bins = histogram(data);
+      bins.forEach(bin => bin.proportion = bin.length / data.length);
+
+      const yHist = d3.scaleLinear().domain([0, d3.max(bins, d => d.proportion)]).nice().range([height, 0]);
+
+      const svgChart2 = d3.select("#chart2").append("svg").attr("width", width + margin.left + margin.right).attr("height", height + margin.top + margin.bottom)
+        .append("g").attr("transform", "translate(" + margin.left + "," + margin.top + ")");
+      svgChart2.selectAll("rect")
+        .data(bins)
+        .enter().append("rect")
+        .attr("x", d => xHist(d.x0) + 1)
+        .attr("y", d => yHist(d.proportion))
+        .attr("width", d => Math.max(0, xHist(d.x1) - xHist(d.x0) - 1))
+        .attr("height", d => height - yHist(d.proportion))
+        .attr("fill", "steelblue")
+        .on("mouseover", (event, d) => {
+          const range = `${d.x0}–${d.x1} mins`;
+          const percent = (d.proportion * 100).toFixed(1);
+          showTooltip(event, `Duration: ${range}<br>Proportion: ${percent}%`);
+        })
+        .on("mouseout", hideTooltip);
+      svgChart2.append("g").attr("transform", "translate(0," + height + ")").call(d3.axisBottom(xHist));
+      svgChart2.append("g").call(d3.axisLeft(yHist).tickFormat(d => (d * 100).toFixed(0) + "%"));
+
+      // Chart 3: Start/End Zone Pie
+      const categories = {
+        "Cornell -> Cornell": 0,
+        "Other -> Cornell": 0,
+        "Cornell -> Other": 0,
+        "Other -> Other": 0
+      };
+
+      data.forEach(d => {
+        const start = d.start_zone;
+        const end = d.end_zone;
+        if (start === "Cornell University" && end === "Cornell University") categories["Cornell -> Cornell"]++;
+        else if (start !== "Cornell University" && end === "Cornell University") categories["Other -> Cornell"]++;
+        else if (start === "Cornell University" && end !== "Cornell University") categories["Cornell -> Other"]++;
+        else categories["Other -> Other"]++;
+      });
+
+      const pieData = Object.entries(categories).map(([key, value]) => ({ key, value }));
+      const pieSvg = d3.select("#chart3").append("svg").attr("width", 500).attr("height", 500)
+        .append("g").attr("transform", `translate(250,250)`);
+      const color = d3.scaleOrdinal().domain(Object.keys(categories)).range(["#1f77b4", "#ff7f0e", "#2ca02c", "#d62728"]);
+      const pie = d3.pie().value(d => d.value);
+      const arc = d3.arc().innerRadius(100).outerRadius(200);
+      pieSvg.selectAll("path").data(pie(pieData)).enter().append("path")
+        .attr("d", arc).attr("fill", d => color(d.data.key)).attr("stroke", "#fff").style("stroke-width", "2px")
+        .on("mouseover", (event, d) => {
+          const label = d.data.key;
+          const count = d.data.value;
+          const percent = ((count / d3.sum(pieData.map(d => d.value))) * 100).toFixed(1);
+          showTooltip(event, `${label}<br>${count} trips<br>${percent}%`);
+        })
+        .on("mouseout", hideTooltip);
+      pieSvg.selectAll("text").data(pie(pieData)).enter().append("text")
+        .attr("transform", d => `translate(${arc.centroid(d)})`).attr("text-anchor", "middle").attr("fill", "#fff").text(d => d.data.key);
+
+      // Chart 4: Cornell User Trips by Hour
+      const cornellUsers = data.filter(d => d.email.includes("@cornell.edu"));
+      const cornellHourCounts = d3.rollup(cornellUsers, v => v.length, d => d.trip_start_time.getHours());
+      const cornellHourData = Array.from(cornellHourCounts, ([hour, count]) => ({ hour: +hour, count })).sort((a, b) => a.hour - b.hour);
+
+      const xCornell = d3.scaleBand().domain(cornellHourData.map(d => d.hour)).range([0, width - margin.left - margin.right]).padding(0.1);
+      const yCornell = d3.scaleLinear().domain([0, d3.max(cornellHourData, d => d.count)]).nice().range([height - margin.top - margin.bottom, 0]);
+
+      const svgChart4 = d3.select("#chart4").append("svg").attr("width", width).attr("height", height)
+        .append("g").attr("transform", `translate(${margin.left},${margin.top})`);
+      svgChart4.selectAll("rect")
+        .data(cornellHourData)
+        .enter().append("rect")
+        .attr("x", d => xCornell(d.hour))
+        .attr("y", d => yCornell(d.count))
+        .attr("width", xCornell.bandwidth())
+        .attr("height", d => height - margin.top - margin.bottom - yCornell(d.count))
+        .attr("fill", "steelblue")
+        .on("mouseover", (event, d) => {
+          showTooltip(event, `Hour: ${d.hour}:00<br>Cornell Trips: ${d.count}`);
+        })
+        .on("mouseout", hideTooltip);
+      svgChart4.append("g").attr("transform", `translate(0,${height - margin.top - margin.bottom})`)
+        .call(d3.axisBottom(xCornell).tickFormat(d => `${d}:00`));
+      svgChart4.append("g").call(d3.axisLeft(yCornell));
+
+      // Chart 5: Cornell vs Other Email Affiliation
+      const emailCategories = { "Cornell Affiliated": 0, "Other": 0 };
+      data.forEach(d => {
+        if (d.email.includes("@cornell.edu")) emailCategories["Cornell Affiliated"]++;
+        else emailCategories["Other"]++;
+      });
+
+      const pieDataEmail = Object.entries(emailCategories).map(([key, value]) => ({ key, value }));
+      const pieSvgEmail = d3.select("#chart5").append("svg").attr("width", 500).attr("height", 500)
+        .append("g").attr("transform", `translate(250,250)`);
+      const pieEmail = d3.pie().value(d => d.value);
+      const arcEmail = d3.arc().innerRadius(100).outerRadius(200);
+      const colorEmail = d3.scaleOrdinal().domain(Object.keys(emailCategories)).range(["#1f77b4", "#ff7f0e"]);
+      pieSvgEmail.selectAll("path").data(pieEmail(pieDataEmail)).enter().append("path")
+        .attr("d", arcEmail).attr("fill", d => colorEmail(d.data.key)).attr("stroke", "#fff").style("stroke-width", "2px")
+        .on("mouseover", (event, d) => {
+          const label = d.data.key;
+          const count = d.data.value;
+          const percent = ((count / d3.sum(pieData.map(d => d.value))) * 100).toFixed(1);
+          showTooltip(event, `${label}<br>${count} trips<br>${percent}%`);
+        })
+        .on("mouseout", hideTooltip);
+      pieSvgEmail.selectAll("text").data(pieEmail(pieDataEmail)).enter().append("text")
+        .attr("transform", d => `translate(${arcEmail.centroid(d)})`).attr("text-anchor", "middle").attr("fill", "#fff").text(d => d.data.key);
+
+      const parseTime = d3.timeParse("%Y-%m-%d %H:%M:%S");
+
+      // Convert the trip_start_time string to a Date object and create a 'month' property
+      data.forEach(d => {
+        const parsedDate = parseTime(d.trip_start_time);
+        if (!parsedDate) {
+          console.error("Date parsing failed for:", d.trip_start_time);
+        }
+        d.trip_start_time = parsedDate;
+        d.month = parsedDate.getFullYear() + "-" + ('0' + (parsedDate.getMonth() + 1)).slice(-2);
+      });
+
+      // Get unique, sorted months and end zones
+      const months = Array.from(new Set(data.map(d => d.month))).sort();
+      const endZones = Array.from(new Set(data.map(d => d.end_zone))).sort();
+
+      // Create aggregated data for each month with counts per end zone.
+      const aggregatedData = months.map(m => {
+        const monthData = { month: m };
+        endZones.forEach(zone => {
+          const count = data.filter(d => d.month === m && d.end_zone === zone).length;
+          monthData[zone] = count;
+        });
+        return monthData;
+      });
+
+      // Adjust margins to allow space for the legend
+      const margin5 = { top: 40, right: 150, bottom: 50, left: 60 },
+        width5 = 800 - margin5.left - margin5.right,
+        height5 = 400 - margin5.top - margin5.bottom;
+
+      // Append the SVG for the chart
+      const svg5 = d3.select("#chart").append("svg")
+        .attr("width", 800)
+        .attr("height", height5 + margin5.top + margin5.bottom)
+        .append("g")
+        .attr("transform", `translate(${margin5.left},${margin5.top})`);
+
+      // Create a scale for month groups (x0)
+      const x0 = d3.scaleBand()
+        .domain(months)
+        .range([0, width5])
+        .paddingInner(0.1);
+
+      // Create a sub-scale for end zones inside each month group (x1)
+      const x1 = d3.scaleBand()
+        .domain(endZones)
+        .range([0, x0.bandwidth()])
+        .padding(0.05);
+
+      // Determine the maximum number of trips for the y-scale
+      const maxCount = d3.max(aggregatedData, d => d3.max(endZones, zone => d[zone]));
+
+      // Create a y-scale for count values
+      const y5 = d3.scaleLinear()
+        .domain([0, maxCount])
+        .nice()
+        .range([height5, 0]);
+
+      // Use a categorical color scale for end zones
+      const color5 = d3.scaleOrdinal()
+        .domain(endZones)
+        .range(d3.schemeCategory10);
+
+      // Draw the grouped bars: one group per month and one bar per end zone
+      const monthGroups = svg.selectAll(".month-group")
+        .data(aggregatedData)
+        .enter().append("g")
+        .attr("class", "month-group")
+        .attr("transform", d => "translate(" + x0(d.month) + ",0)");
+
+      monthGroups.selectAll("rect")
+        .data(d => endZones.map(zone => ({ zone: zone, count: d[zone], month: d.month })))
+        .enter().append("rect")
+        .attr("x", d => x1(d.zone))
+        .attr("y", d => y5(d.count))
+        .attr("width", x1.bandwidth())
+        .attr("height", d => height5 - y5(d.count))
+        .attr("fill", d => color5(d.zone))
+        .on("mouseover", (event, d) => {
+          d3.select("#tooltip")
+            .style("opacity", 0.9)
+            .html("Month: " + d.month + "<br/>Zone: " + d.zone + "<br/>Trips: " + d.count)
+            .style("left", (event.pageX + 10) + "px")
+            .style("top", (event.pageY - 28) + "px");
+        })
+        .on("mouseout", () => {
+          d3.select("#tooltip")
+            .transition()
+            .duration(500)
+            .style("opacity", 0);
+        });
+
+      // Add the x-axis at the bottom of the chart and rotate the labels
+      svg5.append("g")
+        .attr("transform", "translate(0," + height5 + ")")
+        .call(d3.axisBottom(x0))
+        .selectAll("text")
+        .attr("transform", "rotate(-45)")
+        .style("text-anchor", "end");
+
+      // Add the y-axis to the left of the chart
+      svg5.append("g")
+        .call(d3.axisLeft(y));
+
+      // Add an x-axis label
+      svg5.append("text")
+        .attr("text-anchor", "middle")
+        .attr("x", width5 / 2)
+        .attr("y", height5 + margin5.bottom)
+        .text("Month");
+
+      // Add a y-axis label
+      svg5.append("text")
+        .attr("text-anchor", "middle")
+        .attr("transform", "rotate(-90)")
+        .attr("x", -height5 / 2)
+        .attr("y", -margin5.left + 15)
+        .text("Total Trips");
+
+      // Reposition the legend outside of the main chart area on the right
+      const legend = svg5.append("g")
+        .attr("transform", `translate(${width5 + 20}, 0)`);
+
+      endZones.forEach((zone, i) => {
+        const legendRow = legend.append("g")
+          .attr("transform", `translate(0, ${i * 20})`);
+
+        legendRow.append("rect")
+          .attr("width", 15)
+          .attr("height", 15)
+          .attr("fill", color(zone));
+
+        legendRow.append("text")
+          .attr("x", 20)
+          .attr("y", 12)
+          .text(zone);
+      });
+
+
+    }).catch(error => {
+      console.error("Error loading CSV data:", error);
+    });
+  </script>
+</body>
+
+</html>
