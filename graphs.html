@@ -253,6 +253,82 @@
 
       const parseTime = d3.timeParse("%Y-%m-%d %H:%M:%S");
 
+
+      // Chart 6: Most Common Routes 
+      // Create an empty dictionary/map to store route counts
+      let routeCounts = {};
+
+      // Loop over each trip in the data
+      data.forEach(function(trip) {
+        // Construct route, ex: "Cornell University -> CollegeTown"
+        let route = trip.start_zone + " -> " + trip.end_zone;
+        // If the route was already added, add 1. Otherwise, set it as 1 
+        if (routeCounts[route]) {
+          routeCounts[route] += 1;
+        } else {
+          routeCounts[route] = 1;
+        }
+      });
+
+      // Convert into an array of objects, each with route and count keys. Filter out routes with 0 trips
+      let routeArray = Object.entries(routeCounts)
+        .filter(([route, count]) => count > 0) // keep only routes with at least 1 trip
+        .map(([route, count]) => ({ route, count }));
+
+      // Sort by most common route (highest count first)
+      routeArray.sort((a, b) => b.count - a.count);
+
+      const width6 = 800, height6 = 400, margin6 = { top: 40, right: 20, bottom: 150, left: 60 };
+
+      // Clear previous chart content
+      d3.select("#chart6").selectAll("*").remove();
+
+      // Create SVG for chart6
+      const svgChart6 = d3.select("#chart6")
+        .append("svg")
+        .attr("width", width6)
+        .attr("height", height6);
+
+      // Create scales
+      const x6 = d3.scaleBand()
+        .domain(routeArray.slice(0, 20).map(d => d.route)) // show top 20 routes
+        .range([margin6.left, width6 - margin6.right])
+        .padding(0.1);
+
+      const y6 = d3.scaleLinear()
+        .domain([0, d3.max(routeArray, d => d.count)])
+        .nice()
+        .range([height6 - margin6.bottom, margin6.top]);
+
+      // Draw bars
+      svgChart6.selectAll("rect")
+        .data(routeArray.slice(0, 20)) // show top 20 routes
+        .enter().append("rect")
+        .attr("x", d => x6(d.route))
+        .attr("y", d => y6(d.count))
+        .attr("width", x6.bandwidth())
+        .attr("height", d => y6(0) - y6(d.count))
+        .attr("fill", "steelblue")
+        .on("mouseover", (event, d) => {
+          showTooltip(event, `Route: ${d.route}<br>Trips: ${d.count}`);
+        })
+        .on("mouseout", hideTooltip);
+
+      // Add x-axis
+      svgChart6.append("g")
+        .attr("transform", `translate(0,${height6 - margin6.bottom})`)
+        .call(d3.axisBottom(x6))
+        .selectAll("text")
+        .attr("transform", "rotate(-45)")
+        .style("text-anchor", "end");
+
+      // Add y-axis
+      svgChart6.append("g")
+        .attr("transform", `translate(${margin6.left},0)`)
+        .call(d3.axisLeft(y6));
+
+
+
       // Convert the trip_start_time string to a Date object and create a 'month' property
       data.forEach(d => {
         const parsedDate = parseTime(d.trip_start_time);
