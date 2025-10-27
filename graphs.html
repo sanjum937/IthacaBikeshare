@@ -6,6 +6,8 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Graphs for Bike Usage</title>
   <script src="https://d3js.org/d3.v6.min.js"></script>
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.2.0/dist/leaflet.css" />
+  <script src="https://unpkg.com/leaflet@1.2.0/dist/leaflet.js"></script>
   <style>
     .chart-container {
       display: flex;
@@ -60,6 +62,7 @@
     <option value="chart4">Cornell Users: Trips by Hour</option>
     <option value="chart5">Cornell Affiliated Riders (by email)</option>
     <option value="chart6">Most Common Routes</option>
+    <option value ="chart7">Heat Map for Start Zone</option>
   </select>
 
   <!-- Chart Containers -->
@@ -69,6 +72,7 @@
   <div id="chart4" class="chart-container chart-section"></div>
   <div id="chart5" class="chart-container chart-section"></div>
   <div id="chart6" class="chart-container chart-section"></div>
+  <div id="chart7" class="chart-container chart-section" style="height: 500px; width: 100%;"></div>
 
 
   <div id="tooltip"></div>
@@ -83,6 +87,11 @@
       chartSections.forEach(div => {
         div.style.display = div.id === selected ? "block" : "none";
       });
+       if (selected === "chart7" && window.map) {
+        setTimeout(() => {
+          map.invalidateSize();
+        }, 100);
+      }
     }
 
     chartSelect.addEventListener("change", showSelectedChart);
@@ -101,7 +110,9 @@
     function hideTooltip() {
       tooltip.style("opacity", 0);
     }
-    // Trying to get commit working
+
+    // Initialize Leaflet map (need to intialize here or the map will not render properly) 
+    var map = L.map('chart7').setView([42.45, -76.50], 12);
 
     // D3 code
     d3.csv("edu-trips-ithaca-nov-12-24 - edu-trips-ithaca-nov-12-24.csv").then(data => {
@@ -332,6 +343,105 @@
         .call(d3.axisLeft(y6));
 
 
+      // Chart 7: Heat Map Demo
+      const bubblePointsData = {
+        "Cornell University": 0,
+        "City Of Ithaca": 0,
+        "CollegeTown": 0,
+        "Town of Ithaca": 0,
+        "East Hill": 0,
+        "Ithaca College": 0,
+        "South Hill": 0,
+        "West Hill": 0,
+        "ITH - Airport": 0
+      };
+
+      data.forEach(d => {
+        const start = d.start_zone;
+        if (start === "Cornell University" ) bubblePointsData["Cornell University"]++;
+        else if (start === "City Of Ithaca") bubblePointsData["City Of Ithaca"]++;
+        else if (start === "CollegeTown") bubblePointsData["CollegeTown"]++;
+        else if (start === "Town of Ithaca") bubblePointsData["Town of Ithaca"]++;
+        else if (start === "East Hill") bubblePointsData["East Hill"]++;
+        else if (start === "Ithaca College") bubblePointsData["Ithaca College"]++;
+        else if (start === "South Hill") bubblePointsData["South Hill"]++;
+        else if (start === "West Hill") bubblePointsData["West Hill"]++;
+        else bubblePointsData["ITH - Airport"]++;
+      });
+
+      // Demo markers
+      const markers = [
+        { long: -76.4753, lat: 42.4543, size: bubblePointsData["Cornell University"]}, //Cornell University
+        { long: -76.5019, lat: 42.4430, size: bubblePointsData["City Of Ithaca"]}, //City Of Ithaca
+        { long: -76.5035, lat: 42.4444, size: bubblePointsData["CollegeTown"]}, //CollegeTown
+        { long: -76.5030, lat: 42.4405, size: bubblePointsData["Town of Ithaca"]}, //Town of Ithaca
+        { long: -76.4920, lat: 42.4500, size: bubblePointsData["East Hill"]}, //East Hill
+        { long: -76.4950, lat: 42.4265, size: bubblePointsData["Ithaca College"]}, //Ithaca College
+        { long: -76.5150, lat: 42.4300, size: bubblePointsData["South Hill"]}, //South Hill
+        { long: -76.5350, lat: 42.4500, size: bubblePointsData["West Hill"]}, //West Hill
+        {long: -76.45900, lat: 42.4910, size: bubblePointsData["ITH - Airport"]} //ITH - Airport
+      ];
+
+      // Add a tile to the map = a background. Comes from OpenStreetmap
+      L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', {
+          attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
+      }).addTo(map);
+
+
+      // Add SVG layer to Leaflet map
+      L.svg().addTo(map);
+
+      // Select the SVG layer created by Leaflet
+      const svg = d3.select(map.getPanes().overlayPane).select("svg");
+
+      // Add circles to the SVG
+      const g = svg.append("g").attr("class", "leaflet-zoom-hide");
+
+      // --- Color and scaling logic ---
+      const values = markers.map(m => m.size);
+      const minVal = Math.min(...values);
+      const maxVal = Math.max(...values);
+
+      // Color scale: green → red
+      // Light green for low values → light green → red for high
+      function getColor(value) {
+        const ratio = (value - minVal) / (maxVal - minVal);
+        const r = Math.floor(255 * ratio);
+        const g = Math.floor(255 * (1 - ratio));
+        return `rgb(${r}, ${g}, 0)`;
+      }
+
+      // Size scale: radius between 5–25
+      function getRadius(value) {
+        const ratio = (value - minVal) / (maxVal - minVal);
+        return 5 + ratio * 20;
+      }
+
+      // --- Add circle markers ---
+      markers.forEach(m => {
+        const color = getColor(m.size);
+        const radius = getRadius(m.size);
+
+        L.circleMarker([m.lat, m.long], {
+          radius: radius,
+          color: color,
+          fillColor: color,
+          fillOpacity: 0.6,
+          weight: 1
+        })
+          .bindPopup(`<b>${m.name}</b><br>Value: ${m.size}`)
+          .addTo(map);
+      });
+
+      // Function that update circle position if something change
+      function update() {
+        g.selectAll("circle")
+          .attr("cx", d => map.latLngToLayerPoint([d.lat, d.long]).x)
+          .attr("cy", d => map.latLngToLayerPoint([d.lat, d.long]).y);
+      }
+
+      // If the user change the map (zoom or drag), I update circle position:
+      map.on("moveend", update)
 
       // Convert the trip_start_time string to a Date object and create a 'month' property
       data.forEach(d => {
